@@ -9,6 +9,11 @@ import pandas as pd
 import glob
 import sys
 import parse
+import zlib
+from io import ByteIO
+import pycurl
+
+c = pycurl.Curl()
 
 TEMPLATE = """
 <doc id={doc_id}>
@@ -35,9 +40,17 @@ for s in sources:
     thisdf = pd.read_csv(s)
     for idx, row in thisdf.iterrows():
         ##sys.stderr.write('\tdoing row {}, title {}\n'.format(idx, row['title']))  ## uncomment to print out progress (row and title of each  story)
+        the_text = None
         try:
-            story= requests.get(row['url'], headers=headers)     # get the story  
-            soup = BeautifulSoup(story.content, 'html.parser')  # This next bit cleans up the
+            story= requests.get(row['url'], headers=headers)     # get the story
+            the_text = story.content
+        except:
+            story = requests.get(row['url'], headers=headers, stream=True)     # get the raw story
+            raw_content = story.raw.read()
+        try:
+            if the_text == None:
+                the_text = zlib.decompress(raw_content, zlib.MAX_WBITS|32)
+            soup = BeautifulSoup(the_text, 'html.parser')  # This next bit cleans up the
                                                                 # content of the story
             for script in soup(["script", "style"]):
                 script.extract()    # rip it out
@@ -47,7 +60,7 @@ for s in sources:
                                   wing=wing, url=row['url'], story_text = txt.encode("ascii", errors="ignore").decode(),
                                   date=row['publish_date']))
         except:
-            sys.stderr.write('\n*****\nfailed for csv: {}, row{}, title: {}, url: {}\n*****\n'.format(s,idx,
-                row['title'].encode("ascii", errors="ignore").decode(),
+            sys.stderr.write('\n*****\nfailed for csv: {}, row{}, title: {}, url: {}\n*****\n'.format(
+                s,idx, row['title'].encode("ascii", errors="ignore").decode(),
                                                                      row['url']))
 print('</docs>')
