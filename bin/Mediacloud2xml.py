@@ -1,66 +1,119 @@
-import requests      # Python library for Web requests, 
-                     #   it is used both to get the stories from the feed
-                     #   and to interact with the fakebox service
-from bs4 import BeautifulSoup    # Library for manipulating (e.g. scraping) web pages
-                                 # Used here to get the text of the news storys without
-                                 # the html markup
-import html5lib                  # html parsing library used by beautiful soup
+#!/usr/bin/env python3
+
+import re                                 # For pattern matching
+import os                                 # File path munging
+import sys                                # Command line args
+import logging                            # Debugging output
+import gzip                               # Compressing output
+
+# Python library for Web requests, it is used both to get the stories
+# from the feed and to interact with the fakebox service
+
+import requests      
+
+# Library for manipulating (e.g. scraping) web pages.  Used here to
+# get the text of the news storys without the html markup
+
+from bs4 import BeautifulSoup    
+
+# HTML parsing library used by beautiful soup
+
+import html5lib                  
 import pandas as pd
 import glob
-import sys
-import parse
-import zlib
-from io import ByteIO
-import pycurl
 
-c = pycurl.Curl()
+gLogger = logging.getLogger(__file__)
+gLogger.setLevel(logging.WARNING)
 
 TEMPLATE = """
-<doc id={doc_id}>
- <topic>{topic}<topic/>
- <headline>{headline}</headline>
- <bias>{wing}<bias/>
- <url>{url}<url />
- <text>{story_text}</text>
- <date>{date}</date>
+ <doc id="{doc_id}">
+  <topic>{topic}<topic/>
+  <headline>{headline}</headline>
+  <bias>{wing}</bias>
+  <url>{url}</url>
+  <text>{story_text}</text>
+  <date>{date}</date>
  </doc>
 """
 
-sources = glob.glob('*-?-*.csv')
-headers = {'Accept-Encoding': 'deflate'}
+# Process command-line args
+
+from getopt import *
+gInputDir = "."
+gOutput = sys.stdout
+gOutputFile = None
+gCompress = False
+errflag = 0
+
+opts, args = getopt(
+    sys.argv[1:],
+    'd:o:vz?',
+    ('dir', 'output', 'verbose', 'compress')
+)
+
+for k, v in opts:
+    if k == "-o":                   # Output file
+        gOutputFile = v
+    elif k == "-d":
+        gInputDir = v
+    elif k == "-v":
+        gLogger.setLevel(gLogger.getEffectiveLevel() - 10)
+    elif k == "-z":
+        gCompress = True
+    else:
+        errflag += 1
+
+if errflag:
+    sys.stderr.write("Usage: %s [-d dir] [-o file] [-z] [-v]")
+    sys.exit(1)
+
+if gOutputFile:
+    if os.path.exists(gOutputFile):
+        os.rename(gOutputFile, gOutputFile + "~")
+
+    gOutput = open(gOutputFile, mode="wb")
+
+    if gCompress:
+        gOutput = gzip.open(gOutput, mode="wb")
+
+# Grab the sources from the input directory
+
+sources = glob.glob(os.path.join(gInputDir, '*-[lr]-stories*.csv'))
 
 if len(sources) == 0:
-    print('Need a file with -l- or -r- in its name.  got {}'.format(args.infile))
-    sys.exit(-1)
-print('<docs>')
+    gLogger.fatal("No files found")
+    sys.exit(1)
+
+pat = re.compile("(?P<topic>[^-]+)-(?P<wing>[lr])-stories-(?P<date>[0-9]+).csv")
+
+gOutput.write(b"<docs>\n")
+
 for s in sources:
-    topic, wing, rest = parse.parse('{}-{}-{}', s)
-    sys.stderr.write('doing csv {}\n'.format(s))
-    wing = wing.upper()
+    m = pat.match(s)
+
+    wing = m.group('wing')
+    topic = m.group('topic')
+
     thisdf = pd.read_csv(s)
+
     for idx, row in thisdf.iterrows():
-        ##sys.stderr.write('\tdoing row {}, title {}\n'.format(idx, row['title']))  ## uncomment to print out progress (row and title of each  story)
-        the_text = None
-        try:
-            story= requests.get(row['url'], headers=headers)     # get the story
-            the_text = story.content
-        except:
-            story = requests.get(row['url'], headers=headers, stream=True)     # get the raw story
-            raw_content = story.raw.read()
-        try:
-            if the_text == None:
-                the_text = zlib.decompress(raw_content, zlib.MAX_WBITS|32)
-            soup = BeautifulSoup(the_text, 'html.parser')  # This next bit cleans up the
-                                                                # content of the story
-            for script in soup(["script", "style"]):
-                script.extract()    # rip it out
-            txt = soup.get_text()
-            print(TEMPLATE.format(doc_id = row['stories_id'], topic=topic,
-                                  headline = row['title'].encode("ascii", errors="ignore").decode(),
-                                  wing=wing, url=row['url'], story_text = txt.encode("ascii", errors="ignore").decode(),
-                                  date=row['publish_date']))
-        except:
-            sys.stderr.write('\n*****\nfailed for csv: {}, row{}, title: {}, url: {}\n*****\n'.format(
-                s,idx, row['title'].encode("ascii", errors="ignore").decode(),
-                                                                     row['url']))
-print('</docs>')
+        gLogger.info("Processing file %d" % idx)
+
+        story = requests.get(row['url'])                    # get the story  
+        soup = BeautifulSoup(story.content, 'html.parser')  # This next bit cleans up the
+                                                            # content of the story
+        for script in soup(["script", "style"]):
+            script.extract()                                # rip it out
+        txt = soup.get_text()
+        params = {
+            'doc_id': row['stories_id'],
+            'headline': row['title'].encode("ascii", errors="ignore").decode(),
+            'wing': wing,
+            'topic': topic,
+            'url': row['url'],
+            'story_text': txt.encode("ascii", errors="ignore").decode(),
+            'date': row['publish_date']
+        }
+        gOutput.write(TEMPLATE.format(**params).encode('utf-8'))
+
+gOutput.write(b"</docs>\n")
