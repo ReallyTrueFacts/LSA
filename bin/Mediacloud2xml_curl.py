@@ -13,9 +13,9 @@ import datetime
 TEMPLATE = """
 <doc id="{doc_id}">
  <topic>{topic}</topic>
- <headline>{headline}</headline>
+ <headline><![CDATA[{headline}]]></headline>
  <bias>{wing}</bias>
- <url>{url}</url>
+ <url><![CDATA[{url}]]></url>
  <text><![CDATA[{story_text}]]></text>
  <date>{date}</date>
  </doc>
