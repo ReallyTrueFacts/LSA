@@ -16,7 +16,7 @@ TEMPLATE = """
  <headline>{headline}</headline>
  <bias>{wing}</bias>
  <url>{url}</url>
- <text>{story_text}</text>
+ <text><![CDATA[{story_text}]]></text>
  <date>{date}</date>
  </doc>
 """
