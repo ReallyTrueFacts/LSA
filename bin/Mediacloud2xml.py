@@ -22,6 +22,11 @@ import html5lib
 import pandas as pd
 import glob
 
+# Give an idea of how long we have to go
+
+from progressbar import ProgressBar, Percentage, Bar
+from collections import Counter
+
 gLogger = logging.getLogger(__file__)
 gLogger.setLevel(logging.WARNING)
 
@@ -43,12 +48,13 @@ gInputDir = "."
 gOutput = sys.stdout
 gOutputFile = None
 gCompress = False
+gQuiet = False
 errflag = 0
 
 opts, args = getopt(
     sys.argv[1:],
-    'd:o:vz?',
-    ('dir', 'output', 'verbose', 'compress')
+    'd:o:qvz?',
+    ('dir', 'output', 'quiet', 'verbose', 'compress')
 )
 
 for k, v in opts:
@@ -64,7 +70,13 @@ for k, v in opts:
         errflag += 1
 
 if errflag:
-    sys.stderr.write("Usage: %s [-d dir] [-o file] [-z] [-v]")
+    sys.stderr.write("""Usage: %s [-d dir] [-o file] [-z] [-v] [-q]
+-d dir    Take input from the specified directory
+-o file   Write output to the specified file
+-z        Compress output with gzip
+-v        Verbose output
+-q        Quiet output
+""" % sys.argv[0])
     sys.exit(1)
 
 if gOutputFile:
@@ -88,16 +100,40 @@ pat = re.compile("(?P<topic>[^-]+)-(?P<wing>[lr])-stories-(?P<date>[0-9]+).csv")
 
 gOutput.write(b"<docs>\n")
 
+total = Counter()
+
+df_list = []
+
+files = 0
+records = 0
+processed = 0
+
 for s in sources:
+    df = pd.read_csv(s)
+    df_list.append(df)
+
+    files += 1
+    records += df.shape[1]
+
+if not gQuiet:
+    pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=records).start()
+else:
+    pbar = None
+
+for i in range(len(sources)):
+    s = sources[i]
+    df = df_list[i]
+
     m = pat.match(s)
 
     wing = m.group('wing')
     topic = m.group('topic')
 
-    thisdf = pd.read_csv(s)
+    for idx, row in df.iterrows():
+        processed += 1
 
-    for idx, row in thisdf.iterrows():
-        gLogger.info("Processing file %d" % idx)
+        if pbar:
+            pbar.update(processed)
 
         story = requests.get(row['url'])                    # get the story  
         soup = BeautifulSoup(story.content, 'html.parser')  # This next bit cleans up the
@@ -115,5 +151,8 @@ for s in sources:
             'date': row['publish_date']
         }
         gOutput.write(TEMPLATE.format(**params).encode('utf-8'))
+
+    if pbar:
+        pbar.finish()
 
 gOutput.write(b"</docs>\n")
