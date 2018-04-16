@@ -24,7 +24,7 @@ import glob
 
 # Give an idea of how long we have to go
 
-from progressbar import ProgressBar, Percentage, Bar
+from progressbar import ProgressBar, Percentage, Bar, AdaptiveETA
 from collections import Counter
 
 gLogger = logging.getLogger(__file__)
@@ -113,10 +113,10 @@ for s in sources:
     df_list.append(df)
 
     files += 1
-    records += df.shape[1]
+    records += df.shape[0]
 
 if not gQuiet:
-    pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=records).start()
+    pbar = ProgressBar(widgets=[Percentage(), Bar(), AdaptiveETA()], maxval=records).start()
 else:
     pbar = None
 
