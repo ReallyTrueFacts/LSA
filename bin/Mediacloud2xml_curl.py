@@ -23,6 +23,7 @@ TEMPLATE = """
 start = datetime.datetime.now()
 sources = glob.glob('*-?-*.csv')
 headers = {'Accept-Encoding': 'deflate'}
+wingdict = {'L': -2, 'CL': -1, 'C': 0, 'CR': 1, 'R': 2}
 
 if len(sources) == 0:
     print('Need a file with -l- or -r- in its name.  got {}'.format(args.infile))
@@ -31,9 +32,9 @@ print('<docs>')
 for s in sources:
     wordcount = 0
     urlcount = 0
-    topic, wing, rest = parse.parse('{}-{}-{}', s)
+    topic, wing_name, rest = parse.parse('{}-{}-{}', s)
     sys.stderr.write('doing csv {}\n'.format(s))
-    wing = wing.upper()
+    wing = wing_dict[wing_name.upper()]
     thisdf = pd.read_csv(s)
     for idx, row in thisdf.iterrows():
         ##sys.stderr.write('\tdoing row {}, title {}\n'.format(idx, row['title']))  ## uncomment to print out progress (row and title of each  story)
