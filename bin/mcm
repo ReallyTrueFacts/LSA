@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+
+import sys
+import datetime
+import mediacloud
+import os
+import json
+import gzip
+import logging
+
+from datetime import date, datetime, timedelta
+
+# Give an idea of how long we have to go
+
+from progressbar import ProgressBar, Percentage, Bar, AdaptiveETA
+
+gLogger = logging.getLogger(__file__)
+gLogger.setLevel(logging.WARNING)
+
+# Constant definitions
+
+MC_API_KEY = '6f503c700b907b45dd7e0106dd39c3cfe2af11d7f69547341ddc844de7f55e7d'
+TOPICS = [
+    'cats',
+    'pruitt',
+    'skripal'
+]
+COLLECTIONS = {
+    'center': 9360522,
+    'left': 9360520,
+    'center-left': 9360521,
+    'center-right': 9360523,
+    'right': 9360524
+}
+BIAS_VALUE = {
+    'left': -2,
+    'center-left': -1,
+    'center': 0,
+    'center-right': 1,
+    'right': 2
+}
+BIAS_ABBREV = {
+    'l': 'left',
+    'r': 'right',
+    'cl': 'center-left',
+    'cr': 'center-right',
+    'r': 'right'
+}
+    
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    raise TypeError ("Type %s not serializable" % type(obj))
+
+def fetch_word_matrix(mc, topics, keys, rows):
+    result_list = []
+    now = datetime.now()
+    today = date.today()
+
+    records = len(topics) * len(keys)
+
+    if not gQuiet:
+        pbar = ProgressBar(widgets=[Percentage(), Bar(), AdaptiveETA()], maxval=records).start()
+    else:
+        pbar = None
+    
+    processed = 0
+
+    for t in topics:
+        for c in keys:
+            if pbar:
+                pbar.update(processed)
+
+            processed += 1
+            tag = COLLECTIONS[c]
+
+            query = {
+                "run_date": now,
+                "topic": t,
+                "collection": c,
+                "collection_id": tag,
+                "wing": c
+            }
+
+            gLogger.info('Doing topic {topic} collection {tag}'.format(topic=t, tag=c))
+
+            start = today - timedelta(180)
+
+            wm = mc.storyWordMatrix(
+                '+tags_id_media:{tag}'.format(tag=tag),
+                solr_filter=[mc.publish_date_query(start, today)],
+                rows=rows)
+
+            query['stories'] = [mc.story(x) for x in wm['word_matrix'].keys()]
+            query['word_list'] = wm['word_list']
+            query['word_matrix'] = wm['word_matrix']
+            result_list.append(query)
+
+    if pbar:
+        pbar.finish()
+
+    return result_list
+
+# Command line interface
+
+from getopt import *
+
+# Settable parameters
+
+gRows = 20
+gOutput = sys.stdout
+gOutputFile = None
+gCompress = False
+gQuiet = False
+gTopics = []
+gBiases = []
+
+errflag = 0
+
+# Process command line arguments
+
+opts, args = getopt(
+    sys.argv[1:],
+    'b:ho:qt:vz?',
+    ('bias', 'help', 'output', 'quiet', 'topic', 'verbose', 'compress')
+)
+
+for k, v in opts:
+    if k in ('-b', '--bias'):
+        if v in BIAS_ABBREV:
+            v = BIAS_ABBREV[v]
+
+        if v not in BIAS_VALUE:
+            gLogger.error('Illegal bias value %s' % v)
+            errflag += 1
+            continue
+        gBiases.append(v)
+    elif k in ('-o', '--output'):                        # Output file
+        gOutputFile = v
+    elif k in ('-q', '--quiet'):
+        gQuiet = True
+    elif k in ('-r', '--rows'):
+        gRows = int(v)
+    elif k in ('-t', '--topic'):
+        gTopics.append(v)
+    elif k in ('-v', '--verbose'):
+        gLogger.setLevel(gLogger.getEffectiveLevel() - 10)
+    elif k in ('-z', '--compress'):
+        gCompress = True
+    elif k in ('-h', '--help'):
+        errflag += 1
+    else:
+        gLogger.error('Illegal option %s' % k)
+        errflag += 1
+
+# Handle errors or -h.
+
+if gCompress and not gOutputFile:
+    gLogger.error("Can't compress output without an output filename")
+    errflag += 1
+
+if errflag:
+    sys.stderr.write("""Usage: %s [-b bias] [-o file] [-t topic] [-q] [-v] [-z]
+-b bias   Use the given bias. May be repeated. Values include:
+          - c or center
+          - l or left
+          - cl or center-left
+          - cr or center-right
+          - r or right
+          If no value is given, all biases are assumed.
+-o file   Write output to the specified file
+-t topic  List of topics to retrieve. May be repeated.
+-h        Print this message
+-q        Quiet output
+-v        Verbose output
+-z        Compress output with gzip
+""" % sys.argv[0])
+    sys.exit(1)
+
+# Handle defaults and post-processing for command line arguments.
+
+if gOutputFile:
+    if os.path.exists(gOutputFile):
+        os.rename(gOutputFile, gOutputFile + '~')
+
+    if gCompress:
+        gOutput = gzip.open(gOutputFile, mode='wt', encoding='utf-8')
+    else:
+        gOutput = open(gOutputFile, mode='w', encoding='utf-8')
+
+if len(gBiases) == 0:
+    # We put the keys in order of value (left to right). Not sure we
+    # need to, but it's cheap, so no reason not to.
+
+    gBiases = [tup[0] for tup in sorted(BIAS_VALUE.items(), key=lambda tup:tup[1])]
+
+if len(gTopics) == 0:
+    gTopics = TOPICS
+
+mc = mediacloud.api.MediaCloud(MC_API_KEY)
+
+if not mc:
+    gLogger.error('Failed to connect to MediaCloud')
+    sys.exit(1)
+
+result = fetch_word_matrix(mc, gTopics, gBiases, gRows)
+
+json.dump(result, gOutput, indent=2, default=json_serial)
