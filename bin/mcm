@@ -124,7 +124,7 @@ class WordMatrix(JSONEncoder):
         return new_wm
 
 
-def fetch_word_matrix(mc, topics, keys, rows):
+def fetch_word_matrix(mc, topics, keys, rows, language='en'):
     result_list = []
     now = datetime.now()
     today = date.today()
@@ -158,10 +158,12 @@ def fetch_word_matrix(mc, topics, keys, rows):
 
             start = today - timedelta(180)
 
+            # Todo: Add a language parameter if possible
+
             wm = WordMatrix(
                 mc,
                 mc.storyWordMatrix(
-                    '+tags_id_media:{tag}'.format(tag=tag),
+                    '+tags_id_media:{tag} AND language:{lang}'.format(tag=tag, lang=language),
                     solr_filter=[mc.publish_date_query(start, today)],
                     rows=rows),
                 notes
@@ -174,108 +176,111 @@ def fetch_word_matrix(mc, topics, keys, rows):
 
     return summary
 
-# Command line interface
+if __name__ == "__main__":
+    # Command line interface
 
-from getopt import *
+    from getopt import *
 
-# Settable parameters
+    # Settable parameters
 
-gRows = 20
-gOutput = sys.stdout
-gOutputFile = None
-gCompress = False
-gQuiet = False
-gTopics = []
-gBiases = []
+    gRows = 20
+    gOutput = sys.stdout
+    gOutputFile = None
+    gCompress = False
+    gQuiet = False
+    gTopics = []
+    gBiases = []
+    gLanguage = 'en'
 
-errflag = 0
+    errflag = 0
 
-# Process command line arguments
+    # Process command line arguments
 
-opts, args = getopt(
-    sys.argv[1:],
-    'b:ho:qt:vz?',
-    ('bias', 'help', 'output', 'quiet', 'topic', 'verbose', 'compress')
-)
+    opts, args = getopt(
+        sys.argv[1:],
+        'b:hl:o:qt:vz?',
+        ('bias', 'help', 'language', 'output', 'quiet', 'topic', 'verbose', 'compress')
+    )
 
-for k, v in opts:
-    if k in ('-b', '--bias'):
-        if v in BIAS_ABBREV:
-            v = BIAS_ABBREV[v]
+    for k, v in opts:
+        if k in ('-b', '--bias'):
+            if v in BIAS_ABBREV:
+                v = BIAS_ABBREV[v]
 
-        if v not in BIAS_VALUE:
-            gLogger.error('Illegal bias value %s' % v)
+            if v not in BIAS_VALUE:
+                gLogger.error('Illegal bias value %s' % v)
+                errflag += 1
+                continue
+            gBiases.append(v)
+        elif k in ('-o', '--output'):                        # Output file
+            gOutputFile = v
+        elif k in ('-q', '--quiet'):
+            gQuiet = True
+        elif k in ('-r', '--rows'):
+            gRows = int(v)
+        elif k in ('-t', '--topic'):
+            gTopics.append(v)
+        elif k in ('-v', '--verbose'):
+            gLogger.setLevel(gLogger.getEffectiveLevel() - 10)
+        elif k in ('-z', '--compress'):
+            gCompress = True
+        elif k in ('-h', '--help'):
             errflag += 1
-            continue
-        gBiases.append(v)
-    elif k in ('-o', '--output'):                        # Output file
-        gOutputFile = v
-    elif k in ('-q', '--quiet'):
-        gQuiet = True
-    elif k in ('-r', '--rows'):
-        gRows = int(v)
-    elif k in ('-t', '--topic'):
-        gTopics.append(v)
-    elif k in ('-v', '--verbose'):
-        gLogger.setLevel(gLogger.getEffectiveLevel() - 10)
-    elif k in ('-z', '--compress'):
-        gCompress = True
-    elif k in ('-h', '--help'):
-        errflag += 1
-    else:
-        gLogger.error('Illegal option %s' % k)
+        else:
+            gLogger.error('Illegal option %s' % k)
+            errflag += 1
+
+    # Handle errors or -h.
+
+    if gCompress and not gOutputFile:
+        gLogger.error("Can't compress output without an output filename")
         errflag += 1
 
-# Handle errors or -h.
+    if errflag:
+        sys.stderr.write("""Usage: %s [-b bias] [-l lang] [-o file] [-t topic] [-q] [-v] [-z]
+    -b bias   Use the given bias. May be repeated. Values include:
+              - c or center
+              - l or left
+              - cl or center-left
+              - cr or center-right
+              - r or right
+              If no value is given, all biases are assumed.
+    -l lang	  Language to look for. Defaults to 'en'
+    -o file   Write output to the specified file
+    -t topic  List of topics to retrieve. May be repeated.
+    -h        Print this message
+    -q        Quiet output
+    -v        Verbose output
+    -z        Compress output with gzip
+    """ % sys.argv[0])
+        sys.exit(1)
 
-if gCompress and not gOutputFile:
-    gLogger.error("Can't compress output without an output filename")
-    errflag += 1
+    # Handle defaults and post-processing for command line arguments.
 
-if errflag:
-    sys.stderr.write("""Usage: %s [-b bias] [-o file] [-t topic] [-q] [-v] [-z]
--b bias   Use the given bias. May be repeated. Values include:
-          - c or center
-          - l or left
-          - cl or center-left
-          - cr or center-right
-          - r or right
-          If no value is given, all biases are assumed.
--o file   Write output to the specified file
--t topic  List of topics to retrieve. May be repeated.
--h        Print this message
--q        Quiet output
--v        Verbose output
--z        Compress output with gzip
-""" % sys.argv[0])
-    sys.exit(1)
+    if gOutputFile:
+        if os.path.exists(gOutputFile):
+            os.rename(gOutputFile, gOutputFile + '~')
 
-# Handle defaults and post-processing for command line arguments.
+        if gCompress:
+            gOutput = gzip.open(gOutputFile, mode='wt', encoding='utf-8')
+        else:
+            gOutput = open(gOutputFile, mode='w', encoding='utf-8')
 
-if gOutputFile:
-    if os.path.exists(gOutputFile):
-        os.rename(gOutputFile, gOutputFile + '~')
+    if len(gBiases) == 0:
+        # We put the keys in order of value (left to right). Not sure we
+        # need to, but it's cheap, so no reason not to.
 
-    if gCompress:
-        gOutput = gzip.open(gOutputFile, mode='wt', encoding='utf-8')
-    else:
-        gOutput = open(gOutputFile, mode='w', encoding='utf-8')
+        gBiases = [tup[0] for tup in sorted(BIAS_VALUE.items(), key=lambda tup:tup[1])]
 
-if len(gBiases) == 0:
-    # We put the keys in order of value (left to right). Not sure we
-    # need to, but it's cheap, so no reason not to.
+    if len(gTopics) == 0:
+        gTopics = TOPICS
 
-    gBiases = [tup[0] for tup in sorted(BIAS_VALUE.items(), key=lambda tup:tup[1])]
+    mc = mediacloud.api.MediaCloud(MC_API_KEY)
 
-if len(gTopics) == 0:
-    gTopics = TOPICS
+    if not mc:
+        gLogger.error('Failed to connect to MediaCloud')
+        sys.exit(1)
 
-mc = mediacloud.api.MediaCloud(MC_API_KEY)
+    result = fetch_word_matrix(mc, gTopics, gBiases, gRows, gLanguage)
 
-if not mc:
-    gLogger.error('Failed to connect to MediaCloud')
-    sys.exit(1)
-
-result = fetch_word_matrix(mc, gTopics, gBiases, gRows)
-
-json.dump(result, gOutput, indent=2, cls=WordMatrix)
+    json.dump(result, gOutput, indent=2, cls=WordMatrix)
