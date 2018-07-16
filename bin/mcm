@@ -8,6 +8,7 @@ import json
 import gzip
 import logging
 
+from json import JSONEncoder
 from datetime import date, datetime, timedelta
 
 # Give an idea of how long we have to go
@@ -47,12 +48,81 @@ BIAS_ABBREV = {
     'r': 'right'
 }
     
-def json_serial(obj):
-    """JSON serializer for objects not serializable by default json code"""
+# Classes
 
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
-    raise TypeError ("Type %s not serializable" % type(obj))
+class WordMatrix(JSONEncoder):
+    """ Word list + word matrix + stories """
+    def __init__(self, mc=None, wm=None, notes={}, **args):
+        super().__init__(**args)
+
+        self._mc = mc
+
+        if wm is None:
+            self._wm = {'word_list': [], 'word_matrix': {}}
+            self._story_list = []
+            self._story_dict = {}
+        else:
+            self._wm = wm
+            self._story_list = [{**mc.story(x), **notes} for x in wm['word_matrix'].keys()]
+            self._story_dict = {story['stories_id']: story for story in self._story_list}
+
+    def default(self, o):
+        return {
+            'stories': o._story_list,
+            'word_list': o._wm['word_list'],
+            'word_matrix': o._wm['word_matrix']
+        }
+
+    def __add__(self, other):
+        new_wm = WordMatrix(self._mc)
+
+        if self._wm is None:
+            new_wm._wm = other._wm
+            new_wm._story_list = other._story_list
+            new_wm._story_dict = other._story_dict
+            return new_wm
+
+        words = {}
+        id_dict = {}
+        pairs = {}
+
+        # Merge the two word lists
+
+        for n, pair in enumerate(self._wm['word_list']):
+            stem, word = pair
+            words[stem] = n
+
+        count = len(words)
+
+        for n, pair in enumerate(other._wm['word_list']):
+            stem, word = pair
+
+            if stem in words:
+                idx = n
+                id_dict[str(n)] = str(words[stem])
+            else:
+                count += 1
+                idx = count
+                words[stem] = idx
+                id_dict[str(n)] = str(idx)
+
+            pairs[idx] = pair
+
+        new_wm._story_list = self._story_list + other._story_list
+        new_wm._story_dict = {**self._story_dict, **other._story_dict}
+
+        new_wm._wm['word_list'] = [v for k, v in sorted(pairs.items())]
+
+        wm = {**self._wm['word_matrix']}
+
+        for story_id, wm_dict in other._wm['word_matrix'].items():
+            count_dict = {id_dict[word_id]: count for word_id, count in wm_dict.items()}
+            wm[story_id] = count_dict
+
+        new_wm._wm['word_matrix'] = wm
+
+        return new_wm
+
 
 def fetch_word_matrix(mc, topics, keys, rows):
     result_list = []
@@ -66,6 +136,7 @@ def fetch_word_matrix(mc, topics, keys, rows):
     else:
         pbar = None
     
+    summary = WordMatrix(mc)
     processed = 0
 
     for t in topics:
@@ -76,8 +147,7 @@ def fetch_word_matrix(mc, topics, keys, rows):
             processed += 1
             tag = COLLECTIONS[c]
 
-            query = {
-                "run_date": now,
+            notes = {
                 "topic": t,
                 "collection": c,
                 "collection_id": tag,
@@ -88,20 +158,21 @@ def fetch_word_matrix(mc, topics, keys, rows):
 
             start = today - timedelta(180)
 
-            wm = mc.storyWordMatrix(
-                '+tags_id_media:{tag}'.format(tag=tag),
-                solr_filter=[mc.publish_date_query(start, today)],
-                rows=rows)
+            wm = WordMatrix(
+                mc,
+                mc.storyWordMatrix(
+                    '+tags_id_media:{tag}'.format(tag=tag),
+                    solr_filter=[mc.publish_date_query(start, today)],
+                    rows=rows),
+                notes
+            )
 
-            query['stories'] = [mc.story(x) for x in wm['word_matrix'].keys()]
-            query['word_list'] = wm['word_list']
-            query['word_matrix'] = wm['word_matrix']
-            result_list.append(query)
+            summary += wm
 
     if pbar:
         pbar.finish()
 
-    return result_list
+    return summary
 
 # Command line interface
 
@@ -207,4 +278,4 @@ if not mc:
 
 result = fetch_word_matrix(mc, gTopics, gBiases, gRows)
 
-json.dump(result, gOutput, indent=2, default=json_serial)
+json.dump(result, gOutput, indent=2, cls=WordMatrix)
