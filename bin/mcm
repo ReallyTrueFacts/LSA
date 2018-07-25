@@ -10,6 +10,7 @@ import logging
 
 from json import JSONEncoder
 from datetime import date, datetime, timedelta
+from gensim import corpora
 
 # Give an idea of how long we have to go
 
@@ -72,6 +73,26 @@ class WordMatrix(JSONEncoder):
             'word_list': o._wm['word_list'],
             'word_matrix': o._wm['word_matrix']
         }
+
+    @property
+    def stories(self):
+        return self._story_list
+
+    @property
+    def word_list(self):
+        return self._wm['word_list']
+
+    @property
+    def word_matrix(self):
+        return self._wm['word_matrix']
+
+    def mm(self):
+        mm = []
+
+        for story in self._story_list:
+            mm.append([(int(k), v) for k, v in sorted(self.word_matrix[str(story['stories_id'])].items())])
+
+        return mm
 
     def __add__(self, other):
         new_wm = WordMatrix(self._mc)
@@ -186,6 +207,7 @@ if __name__ == "__main__":
     gRows = 20
     gOutput = sys.stdout
     gOutputFile = None
+    gCorpusFile = None
     gCompress = False
     gQuiet = False
     gTopics = []
@@ -198,8 +220,8 @@ if __name__ == "__main__":
 
     opts, args = getopt(
         sys.argv[1:],
-        'b:hl:o:qt:vz?',
-        ('bias', 'help', 'language', 'output', 'quiet', 'topic', 'verbose', 'compress')
+        'b:c:hl:o:qt:vz?',
+        ('bias', 'corpus', 'help', 'language', 'output', 'quiet', 'topic', 'verbose', 'compress')
     )
 
     for k, v in opts:
@@ -212,6 +234,10 @@ if __name__ == "__main__":
                 errflag += 1
                 continue
             gBiases.append(v)
+        elif k in ('-c', '--corpus'):
+            gCorpusFile = v
+        elif k in ('-h', '--help'):
+            errflag += 1
         elif k in ('-o', '--output'):                        # Output file
             gOutputFile = v
         elif k in ('-q', '--quiet'):
@@ -224,8 +250,6 @@ if __name__ == "__main__":
             gLogger.setLevel(gLogger.getEffectiveLevel() - 10)
         elif k in ('-z', '--compress'):
             gCompress = True
-        elif k in ('-h', '--help'):
-            errflag += 1
         else:
             gLogger.error('Illegal option %s' % k)
             errflag += 1
@@ -246,7 +270,8 @@ if __name__ == "__main__":
               - r or right
               If no value is given, all biases are assumed.
     -l lang	  Language to look for. Defaults to 'en'
-    -o file   Write output to the specified file
+    -o file   Write JSON output to the specified file
+    -c file   Write MM corpus output to the specified file
     -t topic  List of topics to retrieve. May be repeated.
     -h        Print this message
     -q        Quiet output
@@ -284,3 +309,6 @@ if __name__ == "__main__":
     result = fetch_word_matrix(mc, gTopics, gBiases, gRows, gLanguage)
 
     json.dump(result, gOutput, indent=2, cls=WordMatrix)
+
+    if gCorpusFile:
+        corpora.MmCorpus.serialize(gCorpusFile, result.mm())
