@@ -22,6 +22,7 @@ gLogger.setLevel(logging.WARNING)
 # Constant definitions
 
 MC_API_KEY = '6f503c700b907b45dd7e0106dd39c3cfe2af11d7f69547341ddc844de7f55e7d'
+MC_API_KEY_2 = '0eef9c4d6d2d30b9b4a606e554b4bac388372e1c6075455ec4bfe27d26ecfab4'
 
 
     
